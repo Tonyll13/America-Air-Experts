@@ -14,11 +14,16 @@ function esc(v: unknown) {
 }
 
 export async function POST(req: Request) {
+  console.log("API /api/lead HIT"); // <-- תראה אם זה בכלל מגיע
+
   try {
     const body = await req.json();
+    console.log("BODY:", body);
+
     const { name, phone, email, service, location, notes } = body ?? {};
 
     if (!name || !phone || !service || !location) {
+      console.log("VALIDATION_FAIL");
       return NextResponse.json(
         { success: false, message: "Missing required fields" },
         { status: 400 }
@@ -26,7 +31,10 @@ export async function POST(req: Request) {
     }
 
     const to = process.env.LEADS_TO_EMAIL;
-    const from = process.env.LEADS_FROM_EMAIL;
+    const fromRaw = process.env.LEADS_FROM_EMAIL || "";
+    const from = fromRaw.replace(/^"+|"+$/g, "").trim(); // מנקה גרשיים אם יש
+
+    console.log("ENV:", { hasTo: !!to, hasFrom: !!from, hasKey: !!process.env.RESEND_API_KEY, from });
 
     if (!to || !from || !process.env.RESEND_API_KEY) {
       return NextResponse.json(
@@ -51,17 +59,35 @@ export async function POST(req: Request) {
       </div>
     `;
 
-    await resend.emails.send({
+    const safeReplyTo =
+      typeof email === "string" && email.includes("@") ? email : undefined;
+
+    const result = await resend.emails.send({
       from,
       to,
       subject,
       html,
-      replyTo: email ? String(email) : undefined,
-    });
+      reply_to: safeReplyTo,
+    } as any);
+
+    console.log("RESEND_RESULT:", result);
+
+    // @ts-ignore
+    if (result?.error) {
+      // @ts-ignore
+      console.log("RESEND_ERROR:", result.error);
+      return NextResponse.json(
+        { success: false, message: "Email provider error" },
+        { status: 502 }
+      );
+    }
 
     return NextResponse.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    return NextResponse.json({ success: false }, { status: 500 });
+  } catch (err: any) {
+    console.error("LEAD_ROUTE_ERROR:", err?.message || err);
+    return NextResponse.json(
+      { success: false, message: "Server error" },
+      { status: 500 }
+    );
   }
 }
